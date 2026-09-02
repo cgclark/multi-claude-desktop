@@ -38,9 +38,9 @@ claude-apps-refresh.sh --list # what's configured
 Instances are defined in `~/.config/claude-instances/instances.conf`:
 
 ```
-# name | bundle id | profile dir | icon hue
-Personal   | com.example.claude-personal   | ~/Library/Application Support/Claude            | 142
-Enterprise | com.example.claude-enterprise | ~/Library/Application Support/Claude-Enterprise | 212
+# name | bundle id | profile dir | icon hue | env (optional)
+Personal   | com.example.claude-personal   | ~/Library/Application Support/Claude            | 142 |
+Enterprise | com.example.claude-enterprise | ~/Library/Application Support/Claude-Enterprise | 212 | CLAUDE_CONFIG_DIR=~/.claude-work
 ```
 
 Add a line and rebuild — the icon is generated automatically from the hue:
@@ -57,6 +57,47 @@ identity, and an empty profile ready to sign in to. Roughly 2 MB and a few secon
 Hues: `0` red · `30` orange · `55` yellow · `142` green · `175` teal · `212` blue ·
 `275` purple · `320` pink.
 
+### Per-instance environment
+
+The optional 5th column exports environment variables before the app starts —
+semicolon-separated `KEY=VALUE` pairs, leading `~` expanded.
+
+**This is the only way to give an instance its own environment.** A macOS `.app` does not
+inherit your shell environment, so `export` in `.zshrc` has no effect on a Dock launch.
+Because the variables are set before `exec`, everything the app spawns inherits them —
+including Claude Code in agent mode.
+
+The motivating case is `CLAUDE_CONFIG_DIR`. Claude Code reads hooks from
+`$CLAUDE_CONFIG_DIR/settings.json` and stores agent-mode session history in
+`$CLAUDE_CONFIG_DIR/projects/`. Left at the default, every instance shares `~/.claude`, so
+hooks from a work instance fire against your personal configuration. Setting it per
+instance splits both.
+
+```
+Enterprise | com.example.claude-enterprise | …/Claude-Enterprise | 212 | CLAUDE_CONFIG_DIR=~/.claude-work
+```
+
+Verify it actually reached the process — a launcher that silently lost the export looks
+identical from the outside:
+
+```bash
+claude-apps-refresh.sh --verify                        # the export is in the launcher
+ps eww -o command= -p <pid> | tr ' ' '\n' | grep CLAUDE_CONFIG_DIR
+```
+
+⚠️ **Pointing an instance at a new config dir does not bring its history along.** Agent-mode
+sessions live in `$CLAUDE_CONFIG_DIR/projects/<encoded-path>/*.jsonl`. Switch the variable
+and the app looks somewhere new — past sessions appear to vanish, though nothing is
+deleted. Copy them across before you switch, or afterwards:
+
+```bash
+cp -Rc ~/.claude/projects/<dir> ~/.claude-work/projects/
+```
+
+Watch for a config dir that already holds a **stale copy** of the same session id: the app
+will show the older one and the newer history looks lost. Compare entry counts and last
+timestamps rather than file mtimes, which can be misleading.
+
 Rules the builder enforces, because both are silently destructive:
 
 - **Bundle ids must be unique.** Two instances sharing one id are the same app to macOS.
@@ -64,6 +105,51 @@ Rules the builder enforces, because both are silently destructive:
 
 Changing an instance's bundle id later forces a fresh sign-in for that instance — macOS
 treats it as a different app for keychain purposes.
+
+### What is isolated, and what is not
+
+Everything under `~/Library/Application Support/<profile>` is per-instance: account,
+conversations, settings, MCP config, caches — **and Cowork files**. On macOS the Cowork
+user-files location resolves under Electron's `userData`, which is the profile, so each
+instance gets its own by default. `scratch-workspaces/` and `cowork-enabled-cli-ops.json`
+live inside the profile directory for the same reason.
+
+(Claude's `NSDocumentsFolderUsageDescription` mentions storing "scheduled tasks, live
+artifacts and other Cowork files" in Documents, which is easy to misread. That is a TCC
+prompt string. In the app, `getPath('documents')` is used on **Windows only** — on macOS
+Documents is never the Cowork location. `~/Documents/Claude`, if you have one, is your own
+folder, not something Claude manages.)
+
+Claude Code's config — hooks, agent-mode session history — is **not** in the profile. It
+lives in `$CLAUDE_CONFIG_DIR`, default `~/.claude`, which is shared by every instance
+unless you set it per instance. See [Per-instance environment](#per-instance-environment).
+
+| | Isolated per instance | Shared |
+|---|---|---|
+| Account, conversations, settings, MCP config | ✅ | |
+| Keychain / login | ✅ | |
+| Cowork files, scratch workspaces | ✅ | |
+| Claude Code hooks + agent-mode sessions | ✅ *once `CLAUDE_CONFIG_DIR` is set* | ⚠️ otherwise |
+| SSH keys, git config, the rest of your home dir | | ⚠️ always |
+
+**The last row is the one that matters** and no amount of configuration here fixes it.
+Every instance runs as the same Unix user with the same permissions, so an MCP server or
+agent running in one instance can read files belonging to another. This setup gives you
+*organisational* separation — separate accounts, separate histories, separate icons — not
+a boundary the OS enforces. If you need the latter, for a client with confidentiality
+obligations, use a **separate macOS user account**: separate home, keychain, TCC grants
+and processes that genuinely cannot read across. In that model each account just runs
+stock Claude and this tooling is unnecessary.
+
+**Choosing an explicit Cowork location.** `coworkUserFilesPath` is an optional, persisted,
+per-profile config key. Set it if you want a named folder per instance
+(`~/Documents/Claude-Client`) rather than the in-profile default — the app verifies a
+stored path and falls back if it cannot. That is for your convenience; the default is
+already per-instance.
+
+Finally: each instance has a **new bundle identity**, so macOS treats it as a brand-new
+app. Expect fresh permission prompts for Documents, Desktop, Downloads, Microphone and
+Screen Recording, plus a full first-run setup against an empty profile.
 
 ---
 

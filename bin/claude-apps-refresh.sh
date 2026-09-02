@@ -51,16 +51,16 @@ PB=/usr/libexec/PlistBuddy
 SRCVER=$($PB -c "Print :CFBundleShortVersionString" "$SRC/Contents/Info.plist" 2>/dev/null || echo "?")
 
 # --- load config ---
-names=() ids=() dirs=() hues=()
+names=() ids=() dirs=() hues=() envs=()
 while IFS= read -r line; do
     line="${line%%#*}"
     [ -z "${line// }" ] && continue
-    IFS='|' read -r n i d h <<<"$line"
+    IFS='|' read -r n i d h e <<<"$line"
     n="$(echo "$n" | xargs)"; i="$(echo "$i" | xargs)"
-    d="$(echo "$d" | xargs)"; h="$(echo "$h" | xargs)"
+    d="$(echo "$d" | xargs)"; h="$(echo "$h" | xargs)"; e="$(echo "${e:-}" | xargs)"
     [ -n "$n" ] && [ -n "$i" ] && [ -n "$d" ] || { echo "error: malformed line: $line" >&2; exit 1; }
     d="${d/#\~/$HOME}"
-    names+=("$n"); ids+=("$i"); dirs+=("$d"); hues+=("${h:-212}")
+    names+=("$n"); ids+=("$i"); dirs+=("$d"); hues+=("${h:-212}"); envs+=("$e")
 done < "$CONF"
 
 [ ${#names[@]} -gt 0 ] || { echo "error: no instances configured in $CONF" >&2; exit 1; }
@@ -79,9 +79,10 @@ app_path() { echo "/Applications/Claude $1.app"; }
 icon_path() { echo "$ICON_DIR/$(short "$1").icns"; }
 
 list() {
-    printf '  %-14s %-34s %-8s %s\n' NAME "BUNDLE ID" HUE PROFILE
+    printf '  %-12s %-32s %-5s %-42s %s\n' NAME "BUNDLE ID" HUE PROFILE ENV
     for i in "${!names[@]}"; do
-        printf '  %-14s %-34s %-8s %s\n' "${names[$i]}" "${ids[$i]}" "${hues[$i]}" "${dirs[$i]/#$HOME/~}"
+        printf '  %-12s %-32s %-5s %-42s %s\n' "${names[$i]}" "${ids[$i]}" "${hues[$i]}" \
+            "${dirs[$i]/#$HOME/~}" "${envs[$i]:--}"
     done
 }
 
@@ -144,6 +145,20 @@ build_one() {
         printf 'HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"\n'
         printf 'DATA_DIR=%q\n' "$datadir"
         printf 'mkdir -p "$DATA_DIR"\n'
+        # A .app inherits no shell environment, so anything the app (and every
+        # process it spawns, Claude Code's agent mode included) must see has to
+        # be exported here, before exec.
+        if [ -n "${envs[$idx]}" ]; then
+            local pair k v
+            IFS=';' read -ra _pairs <<<"${envs[$idx]}"
+            for pair in "${_pairs[@]}"; do
+                pair="$(echo "$pair" | xargs)"
+                [ -z "$pair" ] && continue
+                k="${pair%%=*}"; v="${pair#*=}"
+                v="${v/#\~/$HOME}"
+                printf 'export %s=%q\n' "$k" "$v"
+            done
+        fi
         printf 'exec %s"$HERE/Claude" --user-data-dir="$DATA_DIR" "$@"\n' "$archpin"
     } > "$dest/Contents/MacOS/launcher"
     chmod +x "$dest/Contents/MacOS/launcher"
@@ -187,6 +202,17 @@ verify() {
         dd=$(grep '^DATA_DIR=' "$app/Contents/MacOS/launcher" 2>/dev/null | head -1 | cut -d= -f2-)
         [ -n "$dd" ] && eval "dd=$dd" 2>/dev/null || dd=""
         [ "$dd" = "${dirs[$i]}" ] || problems="$problems wrong-profile"
+        # every configured env var must actually be exported in the launcher
+        if [ -n "${envs[$i]}" ]; then
+            local p k
+            IFS=';' read -ra _p <<<"${envs[$i]}"
+            for p in "${_p[@]}"; do
+                p="$(echo "$p" | xargs)"; [ -z "$p" ] && continue
+                k="${p%%=*}"
+                grep -q "^export $k=" "$app/Contents/MacOS/launcher" 2>/dev/null \
+                    || problems="$problems missing-env:$k"
+            done
+        fi
         codesign --verify --strict "$app" 2>/dev/null || problems="$problems bad-signature"
         if [ -n "$problems" ]; then
             printf '  %-22s CLOBBERED --%s\n' "Claude $name" "$problems"; bad=1

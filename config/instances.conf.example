@@ -1,6 +1,12 @@
 # Claude Desktop instances.
 #
-#   name | bundle id | profile dir | icon hue (degrees)
+#   name | bundle id | profile dir | icon hue (degrees) | env (optional)
+#
+# env        optional KEY=VALUE pairs, separated by ';', exported before the app
+#            starts. A .app does NOT inherit your shell environment, so this is
+#            the only way to give an instance its own CLAUDE_CONFIG_DIR -- which
+#            is what Claude Code (including the desktop app's agent mode) reads
+#            hooks from. Leading ~ is expanded.
 #
 # name       becomes the app "/Applications/Claude <name>.app" and its selector
 #            (lowercased) for claude-apps-refresh.sh
@@ -12,5 +18,5 @@
 #
 # Add a line, run `claude-apps-refresh.sh`, and the new instance is built.
 
-Personal   | com.example.claude-personal   | ~/Library/Application Support/Claude            | 142
-Enterprise | com.example.claude-enterprise | ~/Library/Application Support/Claude-Enterprise | 212
+Personal   | com.example.claude-personal   | ~/Library/Application Support/Claude            | 142 |
+Enterprise | com.example.claude-enterprise | ~/Library/Application Support/Claude-Enterprise | 212 | CLAUDE_CONFIG_DIR=~/.claude-work
