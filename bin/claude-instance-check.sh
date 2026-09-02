@@ -1,86 +1,79 @@
 #!/bin/bash
 # claude-instance-check.sh
 #
-# Lists every running top-level Claude desktop process (helper/renderer
-# subprocesses are excluded) and reports which Electron user-data directory
-# each one is using.
+# Health check for the multi-instance Claude Desktop setup. Lists every running
+# Claude main process, which app it belongs to, and which profile it is using.
 #
 # Exit status:
-#   0  two or more distinct user-data directories are in use
-#   1  fewer than two (i.e. the dual-instance setup is not actually running)
+#   0  healthy
+#   1  PROFILE COLLISION -- two or more processes share one profile directory.
+#      This is the dangerous case: concurrent writes to one LevelDB can corrupt
+#      it. Quit all but one of the colliding processes now.
+#
+# A single running instance is NOT an error -- you simply have one app open.
+# Use `claude-apps-refresh.sh --list` to see what is configured.
 
 set -uo pipefail
 
-# Suffix match: catches both /Applications/Claude.app and the standalone
-# /Applications/Claude Enterprise.app, while excluding Electron helpers (whose
-# executables end in "Claude Helper").
+# Suffix match: catches /Applications/Claude.app and every standalone copy
+# (Claude Personal.app, Claude Enterprise.app, ...) while excluding Electron
+# helpers, whose executables end in "Claude Helper".
 MATCH='/Contents/MacOS/Claude'
 
-printf '%-8s  %-22s  %s\n' 'PID' 'APP' 'USER-DATA-DIR'
-printf '%-8s  %-22s  %s\n' '--------' '----------------------' '-----------------------------------------'
+pids=() apps=() vals=()
 
-dirs=()
-found=0
-
-# comm= gives the executable path only, so Electron helpers living under
-# Contents/Frameworks/... never match.
 while IFS= read -r line; do
     pid=${line%% *}
     exe=${line#* }
-    case "$exe" in
-        *"$MATCH") ;;
-        *) continue ;;
-    esac
+    case "$exe" in *"$MATCH") ;; *) continue ;; esac
 
-    # /Applications/Claude Enterprise.app/Contents/MacOS/Claude -> Claude Enterprise
     app=${exe%/Contents/MacOS/Claude}
     app=${app##*/}
     app=${app%.app}
 
-    found=$((found + 1))
-
     args=$(ps -ww -o command= -p "$pid" 2>/dev/null)
-
     if [[ "$args" == *--user-data-dir* ]]; then
-        # Strip everything up to and including the flag name.
         val=${args#*--user-data-dir}
-        # Accept both "--user-data-dir=PATH" and "--user-data-dir PATH".
-        val=${val#=}
-        val=${val# }
-        # Cut at the next flag, if any. Paths may contain spaces, so only a
-        # space followed by "--" ends the value.
-        case "$val" in
-            *" --"*) val=${val%% --*} ;;
-        esac
-        # Resolve to a canonical absolute path when it exists on disk.
-        if [ -d "$val" ]; then
-            val=$(cd "$val" 2>/dev/null && pwd -P) || val=${val}
-        fi
+        val=${val#=}; val=${val# }
+        case "$val" in *" --"*) val=${val%% --*} ;; esac
+        [ -d "$val" ] && val=$(cd "$val" 2>/dev/null && pwd -P)
     else
-        val='DEFAULT'
+        # no flag: Electron's default profile for this app
+        val="$HOME/Library/Application Support/Claude"
     fi
 
-    printf '%-8s  %-22s  %s\n' "$pid" "$app" "$val"
-    dirs+=("$val")
+    pids+=("$pid"); apps+=("$app"); vals+=("$val")
 done < <(ps -Aww -o pid=,comm=)
 
-if [ "$found" -eq 0 ]; then
-    echo
-    echo 'No Claude desktop processes are running.'
+if [ "${#pids[@]}" -eq 0 ]; then
+    echo 'No Claude instances are running.'
+    exit 0
 fi
 
-distinct=0
-if [ "${#dirs[@]}" -gt 0 ]; then
-    distinct=$(printf '%s\n' "${dirs[@]}" | sort -u | wc -l | tr -d ' ')
-fi
+# --- find profiles used by more than one process ---
+collisions=$(printf '%s\n' "${vals[@]}" | sort | uniq -d)
 
+printf '%-8s  %-22s  %s\n' 'PID' 'APP' 'PROFILE'
+printf '%-8s  %-22s  %s\n' '--------' '----------------------' '------------------------------------------'
+for i in "${!pids[@]}"; do
+    mark=""
+    if [ -n "$collisions" ] && printf '%s\n' "$collisions" | grep -qxF "${vals[$i]}"; then
+        mark="  <-- COLLISION"
+    fi
+    printf '%-8s  %-22s  %s%s\n' "${pids[$i]}" "${apps[$i]}" "${vals[$i]/#$HOME/~}" "$mark"
+done
+
+distinct=$(printf '%s\n' "${vals[@]}" | sort -u | wc -l | tr -d ' ')
 echo
-echo "Processes: $found    Distinct user-data dirs: $distinct"
+echo "Instances running: ${#pids[@]}    Distinct profiles: $distinct"
 
-if [ "$distinct" -lt 2 ]; then
-    echo 'FAIL: fewer than two distinct user-data directories in use.' >&2
+if [ -n "$collisions" ]; then
+    echo
+    echo 'FAIL: these profiles are in use by more than one process:' >&2
+    printf '%s\n' "$collisions" | sed "s|$HOME|~|; s/^/  /" >&2
+    echo 'Quit all but one of each -- concurrent writes can corrupt the profile.' >&2
     exit 1
 fi
 
-echo 'OK: two or more distinct user-data directories in use.'
+echo 'OK: every running instance has its own profile.'
 exit 0

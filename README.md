@@ -1,218 +1,226 @@
-# Dual Claude Desktop Setup (macOS)
+# Multiple Claude Desktop Instances (macOS)
 
-Two Claude Desktop instances — **personal** and **enterprise** — running side by side,
-each with its own account, its own profile, and its own coloured Dock icon.
+Run as many Claude Desktop instances as you like — personal, work, a client account, a
+scratch profile — side by side, each with its own account, its own profile, and its own
+coloured Dock icon.
 
 Claude Desktop accepts Electron's `--user-data-dir`, so isolating a second profile is
-easy. Giving that second instance its own **Dock icon** is not: a thin wrapper `.app`
-can't do it, because the running process belongs to whichever bundle it launched. This
-repo builds each instance as a standalone copy with its own bundle identity — costing
-~2 MB thanks to APFS cloning, rather than a 823 MB duplicate.
+easy. Giving each instance its own **Dock icon** is not: a thin wrapper `.app` can't do
+it, because the running process belongs to whichever bundle it launched. So each
+instance is built as a standalone copy with its own bundle identity — costing **~2 MB**
+thanks to APFS cloning, rather than an 823 MB duplicate.
 
-**Setup:** edit `inst_id` in `bin/claude-apps-refresh.sh` to your own reverse-DNS ids
-(they ship as `com.example.*` placeholders), generate the icon masters, then run it —
-see [Rebuild everything from nothing](#rebuild-everything-from-nothing).
-
-Built on Apple Silicon with an APFS volume. Intel Macs: drop the `arch -arm64` pin.
+Built on Apple Silicon with an APFS volume. On Intel, drop the `arch -arm64` pin.
 
 ---
 
 ## Daily use
 
-| Click | App | Account | Profile |
-|---|---|---|---|
-| 🟢 **green** | `/Applications/Claude Personal.app` | personal | `~/Library/Application Support/Claude` |
-| 🔵 **blue** | `/Applications/Claude Enterprise.app` | enterprise | `~/Library/Application Support/Claude-Enterprise` |
-| 🟠 coral | `/Applications/Claude.app` | — | **don't click it** |
+| Click | App | Profile |
+|---|---|---|
+| 🟢 green | `/Applications/Claude Personal.app` | `~/Library/Application Support/Claude` |
+| 🔵 blue | `/Applications/Claude Enterprise.app` | `~/Library/Application Support/Claude-Enterprise` |
+| 🟠 coral | `/Applications/Claude.app` | **don't click it** |
 
-**Keep only green and blue in the Dock.** Stock `Claude.app` is the *source* the two
-copies are built from, plus the thing that downloads Claude updates. Launching it
-starts a third instance on the personal profile — two processes on one database.
-
-Health check any time:
+**Keep only the coloured apps in your Dock.** Stock `Claude.app` is the *source* the
+copies are built from, plus the thing that downloads Claude updates. Launching it starts
+another instance on the personal profile — two processes on one database.
 
 ```bash
-~/bin/claude-instance-check.sh
+claude-instance-check.sh      # health check
+claude-apps-refresh.sh --list # what's configured
 ```
+
+---
+
+## Adding an instance
+
+Instances are defined in `~/.config/claude-instances/instances.conf`:
+
+```
+# name | bundle id | profile dir | icon hue
+Personal   | com.example.claude-personal   | ~/Library/Application Support/Claude            | 142
+Enterprise | com.example.claude-enterprise | ~/Library/Application Support/Claude-Enterprise | 212
+```
+
+Add a line and rebuild — the icon is generated automatically from the hue:
+
+```bash
+echo 'Client | com.example.claude-client | ~/Library/Application Support/Claude-Client | 320' \
+  >> ~/.config/claude-instances/instances.conf
+claude-apps-refresh.sh client
+```
+
+That produces `/Applications/Claude Client.app` with a pink icon, its own bundle
+identity, and an empty profile ready to sign in to. Roughly 2 MB and a few seconds.
+
+Hues: `0` red · `30` orange · `55` yellow · `142` green · `175` teal · `212` blue ·
+`275` purple · `320` pink.
+
+Rules the builder enforces, because both are silently destructive:
+
+- **Bundle ids must be unique.** Two instances sharing one id are the same app to macOS.
+- **Profiles must be unique.** Two instances on one profile can corrupt it.
+
+Changing an instance's bundle id later forces a fresh sign-in for that instance — macOS
+treats it as a different app for keychain purposes.
 
 ---
 
 ## ⚠️ Recovery after Claude.app updates
 
-**This is the one maintenance task. Read this section.**
+**This is the one maintenance task.**
 
 ### What happens
 
-`Claude Personal.app` and `Claude Enterprise.app` are **point-in-time copies** of
-`Claude.app`, made with APFS cloning. They are fully independent once made. When
-`Claude.app` updates itself, the copies **do not change** — they keep running the old
-version, silently and indefinitely.
+Each instance is a **point-in-time copy** of `Claude.app`, made with APFS cloning, and
+fully independent once made. When `Claude.app` updates itself, the copies **do not
+change** — they keep running the old version, silently and indefinitely.
 
 Worse: `Claude.app` only updates itself **when it runs**. If you only ever launch the
-coloured copies, nothing ever updates anything, and all three freeze at the version
-they were built at.
+coloured copies, nothing updates anything, and everything freezes at the version it was
+built at.
 
 ### Symptoms you are stale
 
-- New Claude features appear in release notes but not in your apps
+- New Claude features in the release notes but not in your apps
 - `claude-apps-refresh.sh --status` shows a version mismatch
-- Disk usage creeping up (see *Disk creep* below)
+- Disk usage creeping up (see *Disk creep*)
 
-### The routine — do this every few weeks
+### The routine — every few weeks
 
 ```bash
 # 1. Check for drift
-~/bin/claude-apps-refresh.sh --status
+claude-apps-refresh.sh --status
 
-# 2. Launch STOCK Claude and let it update itself, then quit it (Cmd-Q).
+# 2. Launch STOCK Claude, let it update itself, then quit it (Cmd-Q)
 open -a "/Applications/Claude.app"
 
-# 3. Quit BOTH coloured apps (Cmd-Q). The rebuild refuses to touch a running app.
+# 3. Quit every coloured app (Cmd-Q) -- the rebuild refuses to touch a running app
 
-# 4. Rebuild both copies from the updated source
-~/bin/claude-apps-refresh.sh
+# 4. Rebuild
+claude-apps-refresh.sh
 
 # 5. Verify
-~/bin/claude-apps-refresh.sh --status
-~/bin/claude-instance-check.sh
+claude-apps-refresh.sh --status
+claude-instance-check.sh
 ```
 
-Step 2 is the part people forget. Without it there is no new version to rebuild *from*,
-and step 4 just rebuilds the same version again.
+Step 2 is the one people skip. Without it there is no new version to rebuild *from*, and
+step 4 just reproduces the same version.
 
-Rebuilding takes a few seconds and costs ~2 MB per app.
-
-### What a rebuild does and does not touch
+### What a rebuild touches
 
 | Preserved | Rebuilt from scratch |
 |---|---|
-| Both profiles (accounts, conversations, settings, MCP config) | The app bundles themselves |
-| Icon masters in `~/.local/share/` | Bundle identity, launcher, signature |
-| The `_trash` backups | — |
+| Every profile (accounts, conversations, settings, MCP config) | The app bundles |
+| Instance config and icon masters | Bundle identity, launcher, signature |
 
-Profiles live **outside** the app bundles, which is why a rebuild is safe. The bundle is
-disposable; the profile is the valuable thing.
+Profiles live **outside** the bundles, which is why rebuilding is safe. The bundle is
+disposable; the profile is the asset.
 
 ### Disk creep
 
-Each copy normally costs ~2 MB of real disk because APFS clone-sharing means unchanged
-files share blocks with `Claude.app`. **When `Claude.app` updates, that sharing breaks** —
-the old blocks are retained for your copies, and real usage climbs toward the full
-823 MB each. Rebuilding re-establishes sharing and reclaims the space. Another reason
-not to skip the refresh.
-
-Real usage, not the inflated Finder number:
+Each instance normally costs ~2 MB real, because APFS clone-sharing means unchanged
+files share blocks with `Claude.app`. **A Claude update breaks that sharing** — old
+blocks are retained for your copies and real usage climbs toward the full 823 MB each.
+Rebuilding re-establishes sharing and reclaims it. Another reason not to skip the refresh.
 
 ```bash
-df -h /
+df -h /     # real usage; Finder will always claim ~825 MB per copy
 ```
-
-Finder will always claim each copy is ~825 MB. Ignore it; the blocks are shared.
 
 ### If a rebuild fails partway
 
-The script does `rm -rf` on the target *before* copying, so a failure can leave an app
-missing. It is not destructive to your data — just re-run it:
+The builder `rm -rf`s the target *before* copying, so a failure can leave an app missing.
+Your data is untouched — just re-run it:
 
 ```bash
-~/bin/claude-apps-refresh.sh personal      # or: enterprise, or: all
+claude-apps-refresh.sh personal    # or any instance name, or with no argument for all
 ```
 
-If the source itself is broken, reinstall Claude from Anthropic, then rebuild.
+If the source itself is broken, reinstall Claude, then rebuild.
 
-### If Claude.app is updated while a copy is running
+### If Claude.app updates while a copy is running
 
-Nothing breaks. The running copy holds its own cloned files and is unaffected. Quit it
-and rebuild at your convenience.
+Nothing breaks. The running copy holds its own cloned files. Quit and rebuild whenever.
 
 ---
 
 ## Health check
 
 ```bash
-~/bin/claude-instance-check.sh
+claude-instance-check.sh
 ```
 
-Lists every running Claude main process, which app it belongs to, and its profile:
-
 ```
-PID       APP                     USER-DATA-DIR
-74901     Claude Enterprise       …/Application Support/Claude-Enterprise
-75300     Claude Personal         …/Application Support/Claude
+PID       APP                     PROFILE
+79012     Claude Personal         ~/Library/Application Support/Claude
+79210     Claude Enterprise       ~/Library/Application Support/Claude-Enterprise
 
-Processes: 2    Distinct user-data dirs: 2
-OK: two or more distinct user-data directories in use.
+Instances running: 2    Distinct profiles: 2
+OK: every running instance has its own profile.
 ```
 
-- **Exit 0** — two or more distinct profiles in use.
-- **Exit 1** — fewer than two. *Expected* if you only have one app open; it is only a
-  fault if you believe both are running.
+- **Exit 0** — healthy. One instance running is fine; that is not an error.
+- **Exit 1** — **profile collision**: two or more processes on one profile, each row
+  flagged `<-- COLLISION`. Quit all but one immediately; concurrent writes to one
+  LevelDB can corrupt it.
 
-**The failure it exists to catch:** two processes on the **same** profile. If two rows
-show the same `USER-DATA-DIR`, quit one immediately — concurrent writes to one LevelDB
-can corrupt it. This happened during setup when stock `Claude.app` stayed running
-alongside `Claude Personal`.
+The collision case is the whole point of the check, and it is easy to hit by accident —
+launching stock `Claude.app` while `Claude Personal` is open does it, since both default
+to the same profile.
 
-It matches executables ending in `/Contents/MacOS/Claude`, so it catches both copies and
-excludes the `Claude Helper` processes (which end in `Claude Helper`).
+It matches executables ending in `/Contents/MacOS/Claude`, catching every copy while
+excluding `Claude Helper` processes.
 
 ---
 
 ## Scripts
 
-All in `~/bin` (ensure it is on your `PATH`).
+In `~/bin` (keep it on your `PATH`).
 
 | Script | What it does |
 |---|---|
-| `claude-instance-check.sh` | Health check — running instances, apps, profiles |
-| `claude-apps-refresh.sh` | Rebuild copies. `all` (default), `personal`, `enterprise`, `--status` |
-| `claude-recolor-icon.sh` | Regenerate a coloured icon master: `claude-recolor-icon.sh <hue> <out.icns>` |
+| `claude-instance-check.sh` | Health check; detects profile collisions |
+| `claude-apps-refresh.sh` | Build/rebuild instances. No args = all; or a name; `--status`; `--list` |
+| `claude-recolor-icon.sh` | Generate an icon master: `claude-recolor-icon.sh <hue> <out.icns>` |
 
-Icon masters live outside the bundles so rebuilds keep them:
+Config and assets:
 
 ```
-~/.local/share/claude-personal/appicon.icns      green (hue 142)
-~/.local/share/claude-enterprise/appicon.icns    blue  (hue 212)
+~/.config/claude-instances/instances.conf     instance definitions
+~/.local/share/claude-instances/<name>.icns   icon masters (auto-generated)
 ```
 
-Lost one? Regenerate and rebuild:
-
-```bash
-~/bin/claude-recolor-icon.sh 212 ~/.local/share/claude-enterprise/appicon.icns
-~/bin/claude-apps-refresh.sh enterprise
-```
-
-Regeneration is deterministic but not byte-identical to the original master (rounding
-differs by up to 10/255 per channel). Visually indistinguishable.
-
-Other hues: red 0 · orange 30 · yellow 55 · teal 175 · purple 275 · pink 320.
+Icon masters live outside the bundles so rebuilds keep them. Delete one and the next
+build regenerates it from the configured hue. Regeneration is deterministic but not
+byte-identical to a previous master (rounding differs by up to 10/255 per channel);
+visually indistinguishable.
 
 ---
 
 ## How the build works
 
-Each copy is made by `claude-apps-refresh.sh`:
+For each instance, `claude-apps-refresh.sh`:
 
-1. **`cp -Rc`** — APFS clonefile copy of `Claude.app`. Unchanged files share blocks, so
-   each copy costs ~2 MB real despite reporting ~825 MB.
-2. **Patch `Info.plist`** — new `CFBundleIdentifier`, `CFBundleDisplayName`,
-   `CFBundleIconFile`, `CFBundleExecutable`.
-3. **Install the coloured icon** into `Contents/Resources/appicon.icns`.
-4. **Write a launcher** at `Contents/MacOS/launcher` that pins the profile and the CPU
-   architecture.
-5. **Re-sign** the main binary and the outer bundle, ad-hoc.
+1. **`cp -Rc`** — APFS clonefile copy of `Claude.app`. Unchanged files share blocks.
+2. **Patches `Info.plist`** — bundle id, display name, icon, executable.
+3. **Installs the icon**, generating it from the hue if missing.
+4. **Writes a launcher** pinning the profile and the CPU architecture.
+5. **Re-signs** the main binary and outer bundle, ad-hoc.
 
-### Why each choice — do not "simplify" these
+### Why each choice — don't "simplify" these
 
 | Choice | Reason |
 |---|---|
-| `cp -Rc` (clone) | 2 MB instead of 823 MB per copy |
-| Re-sign **only** the main binary + outer bundle | The binary's signature seals `Info.plist`, which we edit, so it must be re-signed. Re-signing the 381 MB Electron Framework rewrites it and destroys the clone. Mixed signatures load fine because we sign **without** hardened runtime, so library validation (which demands matching Team IDs) is off |
+| `cp -Rc` (clone) | ~2 MB instead of 823 MB per instance |
+| Re-sign **only** main binary + outer bundle | The binary's signature seals `Info.plist`, which we edit, so it must be re-signed. Re-signing the 381 MB Electron Framework rewrites it and destroys the clone. Mixed signatures load fine because we sign **without** hardened runtime, so library validation (which demands matching Team IDs) is off |
 | `CFBundleName` stays `"Claude"` | Electron derives the helper-app name from it. Anything else fails at launch with `FATAL: Unable to find helper app`. `CFBundleDisplayName` is what the Dock shows |
-| Delete `CFBundleIconName` | It points into `Assets.car` (Claude's own icon) and **outranks** `CFBundleIconFile`. Leave it and you get the orange icon back |
-| Delete `CFBundleURLTypes` | Stops the copies fighting stock Claude over `claude://` and `msauth://` links |
-| `arch -arm64` in the launcher | **Critical.** See below |
-| No `--deep` on codesign | `--deep` follows symlinks and would try to re-sign `/Applications/Claude.app` in place |
+| Delete `CFBundleIconName` | Points into `Assets.car` (Claude's own icon) and **outranks** `CFBundleIconFile`. Leave it and the orange icon comes back |
+| Delete `CFBundleURLTypes` | Stops copies fighting over `claude://` and `msauth://` links |
+| `arch -arm64` in the launcher | **Critical** — see below |
+| No `--deep` on codesign | `--deep` follows symlinks and would re-sign `/Applications/Claude.app` in place |
 
 ---
 
@@ -222,14 +230,14 @@ Each copy is made by `claude-apps-refresh.sh`:
 
 **Never `exec` Claude's binary directly from a shell script.** It is a universal binary
 (x86_64 + arm64). A script-launched `exec` inherits the wrapper's architecture
-preference, which resolves to **x86_64**, and Claude silently runs the Intel slice under
-Rosetta on Apple Silicon. Symptoms: painfully slow typing, a renderer pegged at 100%+ CPU.
+preference, which resolves to **x86_64**, so Claude silently runs the Intel slice under
+Rosetta on Apple Silicon. Symptoms: painfully slow typing, a renderer pegged above 100%
+CPU.
 
 Use `open -n -a` (LaunchServices picks the native slice) or `arch -arm64` explicitly.
-The launcher does the latter.
+The generated launcher does the latter.
 
-**How to spot it:** Activity Monitor → **Kind** column. `Apple` = native, `Intel` = Rosetta.
-Or:
+**Spot it:** Activity Monitor → **Kind** column. `Apple` = native, `Intel` = Rosetta. Or:
 
 ```bash
 lsappinfo list | grep -A1 "pid = <PID>" | grep -o 'Arch=[A-Za-z0-9_]*'
@@ -238,22 +246,19 @@ lsappinfo list | grep -A1 "pid = <PID>" | grep -o 'Arch=[A-Za-z0-9_]*'
 ### 2. `open -n`, not `open -a`
 
 Without `-n`, LaunchServices *activates* an already-running instance instead of starting
-a second one. This mattered more before the copies had distinct identities, but the rule
-stands for any manual launch.
+another. Matters for any manual launch.
 
-### 3. A thin wrapper can never recolour the running Dock tile
+### 3. A thin wrapper can't recolour the running Dock tile
 
-The original approach was a 20 KB wrapper `.app` that launched stock Claude with
+The first attempt was a 20 KB wrapper `.app` launching stock Claude with
 `--user-data-dir`. It works and costs nothing, but the *running* process belongs to
-`Claude.app`, so the Dock always showed the orange icon and the name "Claude". Only a
-standalone copy with its own bundle identity gets its own tile. That is the entire
-reason these copies exist.
+`Claude.app`, so the Dock showed the orange icon and the name "Claude". Only a standalone
+copy with its own identity gets its own tile. That is why these copies exist.
 
 ### 4. codesign rejects symlinks that escape the bundle
 
-The icon cannot live outside `Contents/Resources` via a symlink —
-`invalid destination for symbolic link in bundle`. Hence icon masters are *copied* in at
-build time from `~/.local/share/`.
+The icon can't live outside `Contents/Resources` via a symlink —
+`invalid destination for symbolic link in bundle`. Masters are *copied* in at build time.
 
 ---
 
@@ -262,24 +267,23 @@ build time from `~/.local/share/`.
 ### Login broken / signed out after a rebuild
 
 Re-signing drops Anthropic's team-scoped entitlements (`keychain-access-groups` for
-MSAL/Entra SSO and WebAuthn). Those are prefixed with Anthropic's Team ID and **cannot**
-be reproduced under any other signing identity.
+MSAL/Entra SSO and WebAuthn). Those carry Anthropic's Team ID and **cannot** be
+reproduced under any other signing identity.
 
-**Verified working on the author's setup** — enterprise SSO signs in fine. But if login ever
+**Verified working on the author's setup** — enterprise SSO signs in fine. If login ever
 breaks after an update, this is the first suspect. Expect a keychain prompt after a
 rebuild (click **Allow**), and possibly a fresh sign-in.
 
-Fall back to stock Claude while you investigate: launch `/Applications/Claude.app` for
-personal, and the profiles are untouched.
+Fall back to stock Claude while investigating; profiles are untouched.
 
-### An app won't launch at all
+### An app won't launch
 
 ```bash
 codesign --verify --strict "/Applications/Claude Enterprise.app"   # should be silent
-~/bin/claude-apps-refresh.sh enterprise                            # rebuild
+claude-apps-refresh.sh enterprise
 ```
 
-Run it from Terminal to see the real error:
+Run the launcher from Terminal to see the real error:
 
 ```bash
 "/Applications/Claude Enterprise.app/Contents/MacOS/launcher"
@@ -289,35 +293,36 @@ Run it from Terminal to see the real error:
 
 ### Icon went orange again
 
-`CFBundleIconName` came back (it outranks `CFBundleIconFile`). Rebuild. If the icon is
-right in the bundle but stale in Finder, it's the icon cache:
-
-```bash
-killall Finder
-```
+`CFBundleIconName` came back — it outranks `CFBundleIconFile`. Rebuild. If the bundle is
+right but Finder is stale, it's the icon cache: `killall Finder`.
 
 ### Profile corrupted / conversations missing
 
-Restore a backup — these are APFS clones, so they cost nothing and restore instantly:
-
-```
-~/Library/Application Support/Claude.backup-YYYYMMDD-HHMMSS             (personal)
-~/Library/Application Support/Claude-Enterprise.backup-YYYYMMDD-HHMMSS  (enterprise)
-```
+Restore a backup. These are APFS clones — free to make, instant to restore:
 
 ```bash
 # quit the app first
-mv "$HOME/Library/Application Support/Claude-Enterprise" "$HOME/Library/Application Support/Claude-Enterprise.bad"
+mv "$HOME/Library/Application Support/Claude-Enterprise" \
+   "$HOME/Library/Application Support/Claude-Enterprise.bad"
 cp -Rc "$HOME/Library/Application Support/Claude-Enterprise.backup-YYYYMMDD-HHMMSS" \
        "$HOME/Library/Application Support/Claude-Enterprise"
 ```
 
-Take a fresh backup before risky changes — it is free and instant:
+Take one before any risky change — free and instant:
 
 ```bash
 cp -Rc "$HOME/Library/Application Support/Claude-Enterprise" \
        "$HOME/Library/Application Support/Claude-Enterprise.backup-$(date +%Y%m%d-%H%M%S)"
 ```
+
+### Removing an instance
+
+```bash
+rm -rf "/Applications/Claude Client.app"
+# then delete its line from ~/.config/claude-instances/instances.conf
+```
+
+The profile survives; delete it separately if you actually want the data gone.
 
 ### Full teardown — back to one stock Claude
 
@@ -325,8 +330,8 @@ cp -Rc "$HOME/Library/Application Support/Claude-Enterprise" \
 rm -rf "/Applications/Claude Personal.app" "/Applications/Claude Enterprise.app"
 ```
 
-Profiles survive. Stock `Claude.app` picks up the personal profile automatically. The
-enterprise profile stays on disk; reach it again by rebuilding, or temporarily with:
+Profiles survive. Stock `Claude.app` picks up the personal profile automatically. Reach
+another profile temporarily with:
 
 ```bash
 open -n -a "/Applications/Claude.app" --args \
@@ -335,29 +340,26 @@ open -n -a "/Applications/Claude.app" --args \
 
 ### Rebuild everything from nothing
 
-If both apps and both icon masters are gone but `Claude.app` and the profiles remain:
+If the apps and icon masters are gone but `Claude.app`, the config, and the profiles
+remain:
 
 ```bash
-~/bin/claude-recolor-icon.sh 142 ~/.local/share/claude-personal/appicon.icns
-~/bin/claude-recolor-icon.sh 212 ~/.local/share/claude-enterprise/appicon.icns
-~/bin/claude-apps-refresh.sh
-~/bin/claude-instance-check.sh
+claude-apps-refresh.sh          # icons regenerate from the configured hues
+claude-instance-check.sh
 ```
 
 ---
 
-## Backups and locations
+## Locations
 
 | What | Where |
 |---|---|
-| Personal profile backup | `~/Library/Application Support/Claude.backup-YYYYMMDD-HHMMSS` |
-| Enterprise profile backup | `~/Library/Application Support/Claude-Enterprise.backup-YYYYMMDD-HHMMSS` |
-| Retired thin wrappers + superseded script | `~/Documents/Claude/_trash/` |
-| Icon masters | `~/.local/share/claude-personal/`, `~/.local/share/claude-enterprise/` |
+| Instance config | `~/.config/claude-instances/instances.conf` |
+| Icon masters | `~/.local/share/claude-instances/<name>.icns` |
 | Scripts | `~/bin/claude-*.sh` |
+| Profile backups | `~/Library/Application Support/Claude*.backup-*` |
 
-`/Applications/Claude.app` is **never modified** by any of this — every script only reads
-it. Verify at any time:
+`/Applications/Claude.app` is **never modified** — every script only reads it:
 
 ```bash
 codesign --verify --strict /Applications/Claude.app && echo "untouched"

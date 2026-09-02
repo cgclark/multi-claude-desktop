@@ -1,0 +1,16 @@
+# Claude Desktop instances.
+#
+#   name | bundle id | profile dir | icon hue (degrees)
+#
+# name       becomes the app "/Applications/Claude <name>.app" and its selector
+#            (lowercased) for claude-apps-refresh.sh
+# bundle id  must be unique per instance; changing it later forces a re-login
+# profile    each instance MUST have its own; two instances sharing one profile
+#            can corrupt it
+# hue        0 red · 30 orange · 55 yellow · 142 green · 175 teal · 212 blue
+#            · 275 purple · 320 pink   (icon is generated on first build)
+#
+# Add a line, run `claude-apps-refresh.sh`, and the new instance is built.
+
+Personal   | com.example.claude-personal   | ~/Library/Application Support/Claude            | 142
+Enterprise | com.example.claude-enterprise | ~/Library/Application Support/Claude-Enterprise | 212
