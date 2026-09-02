@@ -145,6 +145,51 @@ If the source itself is broken, reinstall Claude, then rebuild.
 
 Nothing breaks. The running copy holds its own cloned files. Quit and rebuild whenever.
 
+### ⚠️ "Update available" *inside* a coloured instance — don't click it
+
+Each copy carries Claude's own updater (Squirrel/ShipIt). Squirrel replaces the bundle
+**at its own path** — so an update accepted inside `Claude Enterprise.app` would try to
+overwrite *that* app, not stock Claude. The bundle is user-writable, so nothing on the
+filesystem stops it.
+
+In practice it will most likely **fail**: ShipIt validates the downloaded app's code
+signature against the running one. The copies are ad-hoc signed (no Team ID, identifier
+`com.example.claude-*`) while the download is Developer ID signed by Anthropic, so the
+check should reject it — possibly with a vague or silent error.
+
+But if it ever *succeeds*, it overwrites the instance's identity:
+
+| | Before | After a successful in-app update |
+|---|---|---|
+| `CFBundleIdentifier` | `com.example.claude-enterprise` | `com.anthropic.claudefordesktop` |
+| `CFBundleExecutable` | `launcher` | `Claude` |
+| Icon | your colour | orange |
+
+Losing `CFBundleExecutable=launcher` is the damaging part: the launcher is what injects
+`--user-data-dir`. Without it, that app falls back to Electron's **default profile** —
+your personal one — so two apps end up on one profile, which is exactly the collision
+`claude-instance-check.sh` exists to catch.
+
+**So: dismiss update prompts inside the coloured apps.** Update stock `Claude.app`
+instead, then rebuild (see the routine above).
+
+To check whether an instance still has its identity:
+
+```bash
+claude-apps-refresh.sh --verify
+```
+
+```
+Identity check:
+  Claude Personal        ok
+  Claude Enterprise      CLOBBERED -- bundle-id=com.anthropic.claudefordesktop executable=Claude bad-signature
+```
+
+Exit 1 if any instance was clobbered. The fix is always the same — rebuild it.
+
+*(Reasoned from the bundle's updater machinery and signing state, not observed: at the
+time of writing there was no pending update to test against.)*
+
 ---
 
 ## Health check
@@ -183,7 +228,7 @@ In `~/bin` (keep it on your `PATH`).
 | Script | What it does |
 |---|---|
 | `claude-instance-check.sh` | Health check; detects profile collisions |
-| `claude-apps-refresh.sh` | Build/rebuild instances. No args = all; or a name; `--status`; `--list` |
+| `claude-apps-refresh.sh` | Build/rebuild instances. No args = all; or a name; `--status`; `--list`; `--verify` |
 | `claude-recolor-icon.sh` | Generate an icon master: `claude-recolor-icon.sh <hue> <out.icns>` |
 
 Config and assets:

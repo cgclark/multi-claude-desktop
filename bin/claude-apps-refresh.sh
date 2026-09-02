@@ -162,16 +162,59 @@ build_one() {
 
 usage_names() { local o="" i; for i in "${!names[@]}"; do o="$o|$(short "${names[$i]}")"; done; printf '%s' "${o#|}"; }
 
+verify() {
+    # Detects an instance clobbered by Claude's own in-app updater. Squirrel
+    # replaces the bundle AT ITS OWN PATH, so an update applied from inside a
+    # copy would overwrite our identity -- reverting the bundle id, icon and,
+    # critically, CFBundleExecutable, which is what injects --user-data-dir.
+    # The instance would then silently open the DEFAULT profile.
+    local bad=0 i
+    for i in "${!names[@]}"; do
+        local name="${names[$i]}" app problems=""
+        app="$(app_path "$name")"
+        if [ ! -d "$app" ]; then
+            printf '  %-22s not built\n' "Claude $name"; continue
+        fi
+        local id exe
+        id=$($PB -c "Print :CFBundleIdentifier" "$app/Contents/Info.plist" 2>/dev/null || echo "?")
+        exe=$($PB -c "Print :CFBundleExecutable" "$app/Contents/Info.plist" 2>/dev/null || echo "?")
+        [ "$id"  = "${ids[$i]}" ] || problems="$problems bundle-id=$id"
+        [ "$exe" = "launcher" ]   || problems="$problems executable=$exe"
+        [ -x "$app/Contents/MacOS/launcher" ] || problems="$problems launcher-missing"
+        [ -f "$app/Contents/Resources/appicon.icns" ] || problems="$problems icon-missing"
+        # DATA_DIR is written %q-escaped, so unescape it before comparing
+        local dd=""
+        dd=$(grep '^DATA_DIR=' "$app/Contents/MacOS/launcher" 2>/dev/null | head -1 | cut -d= -f2-)
+        [ -n "$dd" ] && eval "dd=$dd" 2>/dev/null || dd=""
+        [ "$dd" = "${dirs[$i]}" ] || problems="$problems wrong-profile"
+        codesign --verify --strict "$app" 2>/dev/null || problems="$problems bad-signature"
+        if [ -n "$problems" ]; then
+            printf '  %-22s CLOBBERED --%s\n' "Claude $name" "$problems"; bad=1
+        else
+            printf '  %-22s ok\n' "Claude $name"
+        fi
+    done
+    if [ "$bad" -ne 0 ]; then
+        echo
+        echo 'An instance lost its identity -- most likely Claude'"'"'s in-app updater ran inside it.' >&2
+        echo 'Rebuild it, then update via stock Claude.app instead:' >&2
+        echo "  $(basename "$0")" >&2
+        return 1
+    fi
+    return 0
+}
+
 case "${1:-all}" in
     --status|-s) echo "Versions:"; status; exit 0 ;;
     --list|-l)   echo "Configured in ${CONF/#$HOME/~}:"; list; exit 0 ;;
+    --verify|-v) echo "Identity check:"; verify; exit $? ;;
     all) sel=(); for i in "${!names[@]}"; do sel+=("$i"); done ;;
     *)
         want="$(short "$1")"; sel=()
         for i in "${!names[@]}"; do
             [ "$(short "${names[$i]}")" = "$want" ] && sel+=("$i")
         done
-        [ ${#sel[@]} -gt 0 ] || { echo "usage: $(basename "$0") [all|$(usage_names)|--status|--list]" >&2; exit 2; }
+        [ ${#sel[@]} -gt 0 ] || { echo "usage: $(basename "$0") [all|$(usage_names)|--status|--list|--verify]" >&2; exit 2; }
         ;;
 esac
 
