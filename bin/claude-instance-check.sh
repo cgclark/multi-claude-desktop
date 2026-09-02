@@ -23,8 +23,11 @@ MATCH='/Contents/MacOS/Claude'
 pids=() apps=() vals=()
 
 while IFS= read -r line; do
-    pid=${line%% *}
-    exe=${line#* }
+    # `ps -o pid=` right-aligns, so short pids carry leading spaces -- splitting
+    # on the first space would yield an empty pid, and the args lookup below
+    # would then wrongly report the default profile (a phantom collision).
+    read -r pid exe <<<"$line"
+    [ -n "$pid" ] || continue
     case "$exe" in *"$MATCH") ;; *) continue ;; esac
 
     app=${exe%/Contents/MacOS/Claude}
