@@ -317,6 +317,43 @@ In `~/bin` (keep it on your `PATH`).
 | `claude-apps-refresh.sh` | Build/rebuild instances. No args = all; or a name; `--status`; `--list`; `--verify` |
 | `claude-recolor-icon.sh` | Generate an icon master: `claude-recolor-icon.sh <hue> <out.icns>` |
 | `claude-stale-check.sh` | Watchdog: stale / clobbered / missing-icon across every instance |
+| `claude-clear-caches.sh` | Quit an instance, delete only regenerable caches, relaunch |
+
+---
+
+## Reclaiming disk space
+
+Finder badly overstates what this setup costs. Ranked by what is actually recoverable:
+
+| Target | Typical size | Notes |
+|---|---|---|
+| `vm_bundles` (per profile) | **~11 GB each** | the Cowork VM sandbox. Re-downloads on demand (~1.2 GB compressed → 10 GiB image) |
+| `Cache` + `Code Cache` (per profile) | 0.3–1.5 GB | regenerable; `claude-clear-caches.sh` |
+| `~/.claude/projects/<dir>` | can reach several GB | agent-mode session transcripts — your history, prune by date deliberately |
+| The app bundles | **~0** | see below |
+
+**Do not try to slim the app bundles.** They report ~885 MB each in Finder but are APFS
+clones of the source, so their real cost is single-digit megabytes — measured repeatedly
+at `-7 MB`, `-4 MB`, `3 MB` on rebuild. Worse, *most* slimming makes things worse:
+`lipo`-thinning the universal binaries or stripping `.lproj` locales rewrites those files,
+which breaks the clone and makes each modified file start consuming real blocks. Thinning
+the 381 MB Electron Framework would turn a ~0 MB copy into a ~190 MB one.
+
+The only case where bundles cost real space is drift: after `Claude.app` updates, the old
+blocks are retained for the copies until you rebuild. Rebuilding is what reclaims it.
+
+### Is a VM bundle safe to delete?
+
+A VM that has never booted is just a downloaded image. These five files appear only once
+a VM has actually started:
+
+```
+machineIdentifier   vmIP   gvisorMacAddress   sessiondata.img   efivars.fd
+```
+
+If none of them exist in `<profile>/vm_bundles/claudevm.bundle`, that VM has never run and
+the whole directory is safe to delete. If any exist, it holds real state — leave it.
+Check `lsof +D` on the directory first, and never delete it while that instance is running.
 
 `claude-recolor-icon.sh` uses `iconutil`, `sips` and `swift` (via
 `claude-recolor-icon.swift`) — macOS system tooling only. It previously used
