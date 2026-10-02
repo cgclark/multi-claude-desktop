@@ -316,6 +316,14 @@ In `~/bin` (keep it on your `PATH`).
 | `claude-instance-check.sh` | Health check; detects profile collisions |
 | `claude-apps-refresh.sh` | Build/rebuild instances. No args = all; or a name; `--status`; `--list`; `--verify` |
 | `claude-recolor-icon.sh` | Generate an icon master: `claude-recolor-icon.sh <hue> <out.icns>` |
+| `claude-stale-check.sh` | Watchdog: stale / clobbered / missing-icon across every instance |
+
+`claude-recolor-icon.sh` uses `iconutil`, `sips` and `swift` (via
+`claude-recolor-icon.swift`) — macOS system tooling only. It previously used
+python3 + PIL + numpy, which broke twice: once when Homebrew moved to python
+3.14, and once when an OS upgrade left miniconda without them. Both times icon
+generation failed silently. Nothing in this setup now depends on Homebrew or pip;
+it does need the Xcode command line tools (`xcode-select --install`).
 
 Config and assets:
 
@@ -326,8 +334,58 @@ Config and assets:
 
 Icon masters live outside the bundles so rebuilds keep them. Delete one and the next
 build regenerates it from the configured hue. Regeneration is deterministic but not
-byte-identical to a previous master (rounding differs by up to 10/255 per channel);
-visually indistinguishable.
+byte-identical to a previous master; visually indistinguishable.
+
+**A missing icon never blocks a rebuild.** If the master is gone and cannot be
+regenerated, the build continues with the stock orange icon and warns loudly. Rebuilds
+carry version and security fixes, so failing one over cosmetics is the wrong trade.
+
+---
+
+## Automated checks (`claude-stale-check.sh`)
+
+A LaunchAgent (`~/Library/LaunchAgents/com.example.claude-stale-check.plist`) runs the
+watchdog **at login and every 6 hours**, across **every instance in the config**. It only
+reads and reports — it never rebuilds, because the builder refuses to touch a running app
+and a background job that quits your windows mid-conversation is worse than a stale copy.
+
+It catches three silent failures:
+
+| | What it means |
+|---|---|
+| **STALE** | `Claude.app` updated; the copy did not, and will run the old version indefinitely |
+| **CLOBBERED** | the copy lost its bundle id, launcher, signature or env exports — usually an in-app update accepted *inside* a copy, which drops the launcher and silently sends that instance to the **default (personal) profile** |
+| **icon master missing** | the next rebuild would fall back to the stock icon |
+
+Results go to `~/Library/Logs/claude-stale-check.log` as well as a notification, so the
+check still works if notification banners are suppressed. Run it by hand any time:
+
+```bash
+claude-stale-check.sh                        # every instance
+claude-stale-check.sh Enterprise             # just one
+CLAUDE_STALE_CHECK_DELAY=0 claude-stale-check.sh   # skip the 45s settle delay
+```
+
+### After a macOS upgrade
+
+An OS upgrade is the one event that hits everything at once. Expect, in this order:
+
+1. **All instances signed out simultaneously** — including stock Claude. The upgrade
+   invalidates stored credentials at the keychain level. Nothing about this setup causes
+   it and nothing here can prevent it; just sign back in.
+2. **Check which account each instance signed into.** If a forced re-login picks up a
+   different web session, an instance can end up on the right profile with the wrong
+   account. Fix it by signing out and in *inside* that instance — rebuilding won't.
+3. **`Claude.app` will have updated**, so every copy is stale. Rebuild them.
+4. **Profiles may balloon** — the Cowork VM sandbox (`vm_bundles`) is ~11 GB *per
+   profile* and re-bootstraps. That is normal, not corruption.
+
+```bash
+claude-stale-check.sh          # what drifted
+claude-apps-refresh.sh         # rebuild all (quit the copies first)
+claude-apps-refresh.sh --verify
+claude-instance-check.sh
+```
 
 ---
 

@@ -111,15 +111,22 @@ build_one() {
         return 1
     fi
 
-    # generate the icon master on first build, or if it went missing
+    # Generate the icon master on first build, or if it went missing.
+    # A missing icon must NEVER block a rebuild: rebuilds carry version and
+    # security fixes, and icon generation depends on python3+PIL, which OS and
+    # Homebrew upgrades have broken before. If it cannot be produced, build with
+    # the stock icon and say so loudly.
+    local have_icon=yes
     if [ ! -f "$icon" ]; then
         mkdir -p "$ICON_DIR"
-        if [ -x "$RECOLOR" ]; then
-            echo "  generating icon for $name (hue $hue)"
-            "$RECOLOR" "$hue" "$icon" >/dev/null || { echo "  ! icon generation failed" >&2; return 1; }
+        if [ -x "$RECOLOR" ] && "$RECOLOR" "$hue" "$icon" >/dev/null 2>&1; then
+            echo "  generated icon for $name (hue $hue)"
         else
-            echo "  ! no icon at $icon and claude-recolor-icon.sh not found" >&2
-            return 1
+            have_icon=no
+            echo "  ! no icon master for $name and it could not be generated." >&2
+            echo "  ! Building with the STOCK icon so the update still lands." >&2
+            echo "  !   fix: restore $icon, or make python3 able to 'import PIL, numpy'," >&2
+            echo "  !        then re-run: $(basename "$0") $(short "$name")" >&2
         fi
     fi
 
@@ -130,12 +137,18 @@ build_one() {
 
     $PB -c "Set :CFBundleIdentifier $bid"                "$dest/Contents/Info.plist"
     $PB -c "Set :CFBundleDisplayName Claude $name"       "$dest/Contents/Info.plist"
-    $PB -c "Set :CFBundleIconFile appicon"               "$dest/Contents/Info.plist"
     $PB -c "Set :CFBundleExecutable launcher"            "$dest/Contents/Info.plist"
-    for k in CFBundleIconName CFBundleURLTypes NSUserActivityTypes; do
+    for k in CFBundleURLTypes NSUserActivityTypes; do
         $PB -c "Delete :$k" "$dest/Contents/Info.plist" 2>/dev/null || true
     done
-    cp "$icon" "$dest/Contents/Resources/appicon.icns"
+    if [ "$have_icon" = yes ]; then
+        $PB -c "Set :CFBundleIconFile appicon" "$dest/Contents/Info.plist"
+        # CFBundleIconName points into Assets.car (Claude's own icon) and
+        # outranks CFBundleIconFile, so it has to go -- but only when we
+        # actually have a replacement, otherwise the app gets no icon at all.
+        $PB -c "Delete :CFBundleIconName" "$dest/Contents/Info.plist" 2>/dev/null || true
+        cp "$icon" "$dest/Contents/Resources/appicon.icns"
+    fi
 
     local archpin=""
     [ "$(uname -m)" = "arm64" ] && archpin="/usr/bin/arch -arm64 "

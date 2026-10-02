@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.example.claude-stale-check</string>
+
+	<!-- No instance argument: checks every instance in
+	     ~/.config/claude-instances/instances.conf, so adding one there is
+	     automatically covered. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/YOUR-USERNAME/bin/claude-stale-check.sh</string>
+	</array>
+
+	<!-- At login, and every 6 hours after. The login-only version missed an
+	     update that landed mid-session and went unnoticed for a day. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>21600</integer>
+
+	<key>StandardOutPath</key>
+	<string>/Users/YOUR-USERNAME/Library/Logs/claude-stale-check.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/YOUR-USERNAME/Library/Logs/claude-stale-check.err.log</string>
+</dict>
+</plist>
